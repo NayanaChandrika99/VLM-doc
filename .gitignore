@@ -1,0 +1,39 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+build/
+dist/
+*.log
+*.tmp
+
+# Virtual environments
+venv/
+.envrc
+.venv/
+
+# Caches & tooling
+.mypy_cache/
+.pytest_cache/
+.ipynb_checkpoints/
+coverage/
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+
+# Environment overrides (keep root .env committed)
+.env.local
+.env.*
+!.env
+
+# OS cruft
+.DS_Store
+Thumbs.db
+*.md
+.env
+
