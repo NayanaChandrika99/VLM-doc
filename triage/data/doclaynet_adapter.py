@@ -1,10 +1,9 @@
 """
 DocLayNet dataset adapter providing layout annotations for downstream use.
 
-The adapter targets the `nevernever69/dit-doclaynet-segmentation` subset,
-enforcing document-level splits to avoid template leakage and returning
-tensorised pages alongside region metadata derived from bounding boxes and
-segmentation polygons.
+The adapter targets the `pierreguillou/DocLayNet-base` subset, enforcing
+document-level splits to avoid template leakage and returning tensorised pages
+alongside region metadata derived from block-level bounding boxes.
 """
 
 from __future__ import annotations
@@ -13,36 +12,38 @@ import math
 import random
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Callable, Dict, Iterable, Iterator, List, Literal, Optional, Sequence
+from pathlib import Path
+from typing import Callable, Dict, Iterable, Iterator, List, Literal, Optional, Sequence, Union, Tuple
 
 from datasets import Dataset, IterableDataset, concatenate_datasets, load_dataset
 from PIL import Image
 import torch
 from torch.utils.data import Dataset as TorchDataset
+from huggingface_hub import hf_hub_download
 
 from .transforms import get_default_image_transform
 
-DOCLAYNET_DATASET_ID = "nevernever69/dit-doclaynet-segmentation"
+DOCLAYNET_DATASET_ID = "pierreguillou/DocLayNet-base"
 SPLIT_NAMES = ("train", "validation", "test")
 DOC_KEYS = ("document_id", "document", "doc_id", "doc_name", "source")
 DOCLAYNET_LABELS = [
-    "background",
-    "title",
-    "paragraph",
-    "figure",
-    "table",
-    "list",
-    "header",
-    "footer",
-    "page_number",
-    "footnote",
     "caption",
+    "footnote",
+    "formula",
+    "list_item",
+    "page_footer",
+    "page_header",
+    "picture",
+    "section_header",
+    "table",
+    "text",
+    "title",
 ]
 
 
 @dataclass(frozen=True)
 class DocLayNetRegion:
-    """Structured representation of a single layout region (bbox + optional masks)."""
+    """Structured representation of a single layout region (bbox + optional metadata)."""
 
     bbox: Sequence[float]
     label: str
@@ -154,23 +155,40 @@ def iter_regions(sample: DocLayNetSample) -> Iterator[DocLayNetRegion]:
     yield from sample.regions
 
 
-def _load_combined_dataset(dataset_id: str, base_split: str, cache_dir: Optional[str]) -> Dataset:
+def _load_combined_dataset(
+    dataset_id: str,
+    base_split: str,
+    cache_dir: Optional[str],
+) -> Union[Dataset, "_DocLayNetMemoryDataset"]:
     """
     Load the requested HF dataset split, falling back gracefully if unavailable.
     """
 
     try:
-        dataset = load_dataset(dataset_id, split=base_split, cache_dir=cache_dir)
-    except ValueError:
-        splits = []
-        for candidate in ("train", "validation", "test"):
-            try:
-                splits.append(load_dataset(dataset_id, split=candidate, cache_dir=cache_dir))
-            except ValueError:
-                continue
-        if not splits:
-            raise
-        dataset = concatenate_datasets(splits)
+        dataset = load_dataset(
+            dataset_id,
+            split=base_split,
+            cache_dir=cache_dir,
+        )
+    except (ValueError, RuntimeError):
+        if dataset_id == DOCLAYNET_DATASET_ID:
+            dataset = _load_doclaynet_base_from_archive(cache_dir, splits=tuple(_parse_splits(base_split)))
+        else:
+            splits = []
+            for candidate in ("train", "validation", "test"):
+                try:
+                    splits.append(
+                        load_dataset(
+                            dataset_id,
+                            split=candidate,
+                            cache_dir=cache_dir,
+                        )
+                    )
+                except ValueError:
+                    continue
+            if not splits:
+                raise
+            dataset = concatenate_datasets(splits)
     if isinstance(dataset, IterableDataset):
         raise TypeError("DocLayNet adapter requires a finite Dataset, not IterableDataset.")
     return dataset
@@ -224,9 +242,10 @@ def _document_split_assignments(
 
 def _ensure_pil_image(value: Image.Image) -> Image.Image:
     if isinstance(value, Image.Image):
-        if value.mode != "RGB":
-            return value.convert("RGB")
-        return value
+        return value if value.mode == "RGB" else value.convert("RGB")
+    if isinstance(value, (str, Path)):
+        image = Image.open(value)
+        return image if image.mode == "RGB" else image.convert("RGB")
     raise TypeError(f"Unsupported image type: {type(value)!r}")
 
 
@@ -245,10 +264,9 @@ def _resolve_document_id(record: dict) -> str:
 
 
 def _extract_regions(record: dict) -> List[DocLayNetRegion]:
-    bboxes = record.get("bboxes")
-    categories = record.get("category_id")
-    segmentations = record.get("segmentation")
-    areas = record.get("area")
+    bboxes = record.get("bboxes_block") or record.get("bboxes")
+    categories = record.get("categories") or record.get("category_id")
+    texts = record.get("texts") or []
     regions: List[DocLayNetRegion] = []
 
     if bboxes is not None and categories is not None:
@@ -256,9 +274,8 @@ def _extract_regions(record: dict) -> List[DocLayNetRegion]:
         for idx in range(limit):
             bbox = _ensure_bbox(bboxes[idx])
             label = _resolve_label(categories[idx])
-            segmentation = segmentations[idx] if segmentations is not None and idx < len(segmentations) else None
-            area = areas[idx] if areas is not None and idx < len(areas) else None
-            regions.append(DocLayNetRegion(bbox=bbox, label=label, segmentation=segmentation, area=area))
+            area = _compute_area(bbox)
+            regions.append(DocLayNetRegion(bbox=bbox, label=label, area=area))
         return regions
 
     annotations = record.get("annotations") or record.get("segments") or record.get("layout")
@@ -293,6 +310,11 @@ def _ensure_bbox(value) -> Sequence[float]:
 
 
 def _resolve_label(category: int | str) -> str:
+    if isinstance(category, str):
+        normalized = category.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in DOCLAYNET_LABELS:
+            return normalized
+        return normalized
     try:
         index = int(category)
     except (TypeError, ValueError):
@@ -300,3 +322,126 @@ def _resolve_label(category: int | str) -> str:
     if 0 <= index < len(DOCLAYNET_LABELS):
         return DOCLAYNET_LABELS[index]
     return str(index)
+
+
+def _compute_area(bbox: Sequence[float]) -> Optional[float]:
+    if len(bbox) < 4:
+        return None
+    _, _, width, height = bbox[:4]
+    return float(width) * float(height)
+
+
+def _parse_splits(base_split: str) -> List[str]:
+    return [token.strip() for token in base_split.split("+") if token.strip()]
+
+
+class _DocLayNetMemoryDataset:
+    """Lightweight dataset emulating Hugging Face Dataset essentials."""
+
+    def __init__(self, records: List[dict]) -> None:
+        self._records = records
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __getitem__(self, index: int) -> dict:
+        return self._records[index]
+
+    def select(self, indices: List[int]) -> "_DocLayNetMemoryDataset":
+        return _DocLayNetMemoryDataset([self._records[i] for i in indices])
+
+
+@lru_cache(maxsize=2)
+def _load_doclaynet_base_from_archive(
+    cache_dir: Optional[str],
+    *,
+    splits: Tuple[str, ...],
+) -> _DocLayNetMemoryDataset:
+    """
+    Load DocLayNet base dataset directly from the published zip archive.
+
+    Returns:
+        Memory-backed dataset with `__len__`, `__getitem__`, and `select`.
+    """
+
+    zip_path = hf_hub_download(
+        repo_id=DOCLAYNET_DATASET_ID,
+        filename="data/dataset_base.zip",
+        repo_type="dataset",
+        cache_dir=cache_dir,
+    )
+    extract_root = Path(zip_path).with_suffix("")
+    if not extract_root.exists():
+        import zipfile
+
+        extract_root.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path, "r") as archive:
+            archive.extractall(extract_root)
+
+    base_dir = extract_root / "base_dataset"
+    if not base_dir.exists():
+        raise FileNotFoundError(f"DocLayNet base archive missing 'base_dataset' directory at {base_dir}")
+
+    combined_records: List[dict] = []
+    for split in splits:
+        split_dir = base_dir / split
+        if not split_dir.exists():
+            continue
+        annotations_dir = split_dir / "annotations"
+        images_dir = split_dir / "images"
+        for guid, annotation_path in enumerate(sorted(annotations_dir.glob("*.json"))):
+            record = _parse_doclaynet_base_record(annotation_path, images_dir, guid)
+            combined_records.append(record)
+
+    return _DocLayNetMemoryDataset(combined_records)  # type: ignore[return-value]
+
+
+def _parse_doclaynet_base_record(annotation_path: Path, images_dir: Path, guid: int) -> dict:
+    import json
+
+    with annotation_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+
+    page_metadata = data.get("metadata", {})
+    forms = data.get("form", [])
+    texts: List[str] = []
+    categories: List[str] = []
+    bboxes_block: List[Sequence[float]] = []
+    bboxes_line: List[Sequence[float]] = []
+
+    for item in forms:
+        texts.append(item.get("text", ""))
+        categories.append(item.get("category", "unknown"))
+        bboxes_block.append(_ensure_bbox(item.get("box")))
+        bboxes_line.append(_ensure_bbox(item.get("box_line")))
+
+    image_filename = annotation_path.name.replace(".json", ".png")
+    image_path = images_dir / image_filename
+    if not image_path.exists():
+        raise FileNotFoundError(f"DocLayNet base image missing: {image_path}")
+
+    return {
+        "id": str(guid),
+        "image": str(image_path),
+        "texts": texts,
+        "categories": [_normalize_category_name(cat) for cat in categories],
+        "bboxes_block": bboxes_block,
+        "bboxes_line": bboxes_line,
+        "metadata": {
+            "original_filename": page_metadata.get("original_filename", ""),
+            "page_no": page_metadata.get("page_no", 0),
+            "num_pages": page_metadata.get("num_pages", 0),
+            "collection": page_metadata.get("collection", ""),
+            "doc_category": page_metadata.get("doc_category", ""),
+            "page_hash": page_metadata.get("page_hash", ""),
+            "original_width": page_metadata.get("original_width", 0),
+            "original_height": page_metadata.get("original_height", 0),
+            "coco_width": page_metadata.get("coco_width", 0),
+            "coco_height": page_metadata.get("coco_height", 0),
+        },
+    }
+
+
+def _normalize_category_name(value: str) -> str:
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    return normalized or "unknown"

@@ -21,6 +21,8 @@ venv/
 .ipynb_checkpoints/
 coverage/
 htmlcov/
+.hf_cache
+datasets/
 
 # Editors
 .vscode/
@@ -36,4 +38,3 @@ htmlcov/
 Thumbs.db
 *.md
 .env
-

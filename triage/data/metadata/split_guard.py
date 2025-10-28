@@ -1,5 +1,5 @@
 """
-Guards to ensure dataset split integrity for RVL-CDIP-small and DocLayNet segmentation.
+Guards to ensure dataset split integrity for RVL-CDIP-small and DocLayNet base.
 
 Run this script in CI to detect template leakage across document-level splits
 or mismatched sample counts compared to the authoritative specifications.

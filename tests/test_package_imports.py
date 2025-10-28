@@ -11,3 +11,13 @@ def test_triage_data_importable():
 
     assert hasattr(triage.data, "doclaynet_adapter")
     assert hasattr(triage.data, "rvl_adapter")
+
+
+def test_prompts_and_inference_importable():
+    """Baseline prompt helpers and inference module should import cleanly."""
+
+    import triage.prompts
+    import triage_infer
+
+    assert hasattr(triage.prompts, "build_baseline_prompt")
+    assert hasattr(triage_infer, "BaselineInference")

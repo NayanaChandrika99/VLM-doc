@@ -103,26 +103,26 @@ def test_doclaynet_split_assignment(monkeypatch):
         [
             {
                 "image": base_image,
-                "bboxes": [(0, 0, 1, 1)],
-                "category_id": [1],
+                "bboxes_block": [(0, 0, 1, 1)],
+                "categories": [1],
                 "metadata": {"original_filename": "docA.pdf", "page_no": 0},
             },
             {
                 "image": base_image,
-                "bboxes": [(0, 0, 1, 1)],
-                "category_id": [1],
+                "bboxes_block": [(0, 0, 1, 1)],
+                "categories": [1],
                 "metadata": {"original_filename": "docA.pdf", "page_no": 1},
             },
             {
                 "image": base_image,
-                "bboxes": [(0, 0, 1, 1)],
-                "category_id": [3],
+                "bboxes_block": [(0, 0, 1, 1)],
+                "categories": [3],
                 "metadata": {"original_filename": "docB.pdf", "page_no": 0},
             },
             {
                 "image": base_image,
-                "bboxes": [(0, 0, 1, 1)],
-                "category_id": [4],
+                "bboxes_block": [(0, 0, 1, 1)],
+                "categories": [4],
                 "metadata": {"original_filename": "docC.pdf", "page_no": 0},
             },
         ]
@@ -149,22 +149,21 @@ def test_doclaynet_dataset_returns_regions(monkeypatch):
     records = [
         {
             "image": base_image,
-            "bboxes": [(0, 0, 1, 1), (1, 1, 2, 2)],
-            "category_id": [2, 4],
-            "segmentation": [[[0, 0, 1, 0, 1, 1, 0, 1]], [[1, 1, 2, 1, 2, 2, 1, 2]]],
-            "area": [0.5, 0.7],
+            "bboxes_block": [(0, 0, 1, 1), (1, 1, 2, 2)],
+            "categories": [9, 3],  # text, list_item
+            "texts": ["hello world", "bullet"],
             "metadata": {"original_filename": "docX.pdf", "page_no": 3},
         },
         {
             "image": base_image,
-            "bboxes": [(0, 0, 1, 1)],
-            "category_id": [1],
+            "bboxes_block": [(0, 0, 1, 1)],
+            "categories": [1],
             "metadata": {"original_filename": "docY.pdf", "page_no": 0},
         },
         {
             "image": base_image,
-            "bboxes": [(0, 0, 1, 1)],
-            "category_id": [10],
+            "bboxes_block": [(0, 0, 1, 1)],
+            "categories": [10],
             "metadata": {"original_filename": "docZ.pdf", "page_no": 0},
         },
     ]
@@ -178,8 +177,8 @@ def test_doclaynet_dataset_returns_regions(monkeypatch):
     assert sample.uid == "docX.pdf-3"
     assert sample.original_size == base_image.size
     assert len(sample.regions) == 2
-    assert sample.regions[0].label == doclaynet_adapter.DOCLAYNET_LABELS[2]
-    assert sample.regions[0].segmentation == [[0, 0, 1, 0, 1, 1, 0, 1]]
+    assert sample.regions[0].label == "text"
+    assert sample.regions[0].area == pytest.approx(1.0)
     assert isinstance(sample.image, torch.Tensor)
 
 

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Triage Baseline Output",
+  "type": "object",
+  "required": ["label", "confidence", "meta"],
+  "additionalProperties": false,
+  "properties": {
+    "label": {
+      "type": "string",
+      "enum": [
+        "letter",
+        "form",
+        "email",
+        "handwritten",
+        "advertisement",
+        "scientific_report",
+        "scientific_publication",
+        "specification",
+        "file_folder",
+        "news_article",
+        "budget",
+        "invoice",
+        "presentation",
+        "questionnaire",
+        "resume",
+        "memo",
+        "unknown"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "meta": {
+      "type": "object",
+      "required": ["model_id", "calibration_id", "adapter_id"],
+      "additionalProperties": false,
+      "properties": {
+        "model_id": { "type": "string" },
+        "calibration_id": { "type": "string" },
+        "adapter_id": { "type": "string" }
+      }
+    }
+  }
+}

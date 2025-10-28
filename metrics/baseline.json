@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "model_id": "richardyoung/olmOCR-2-7B-1025-MLX-4bit",
+    "calibration_id": "baseline-temp-v0",
+    "adapter_id": "global",
+    "prompt_guidance": []
+  },
+  "dataset": {
+    "id": "vaclavpechtor/rvl_cdip-small-200",
+    "splits": {
+      "validation": 0,
+      "test": 0
+    }
+  },
+  "metrics": {
+    "validation": {
+      "threshold": 0.0,
+      "macro_f1": 0.0,
+      "per_class_f1": {},
+      "json_validity": 0.0,
+      "abstain_rate": 0.0,
+      "support": 0,
+      "confusion": {}
+    },
+    "test": {
+      "threshold": 0.0,
+      "macro_f1": 0.0,
+      "per_class_f1": {},
+      "json_validity": 0.0,
+      "abstain_rate": 0.0,
+      "support": 0,
+      "confusion": {}
+    }
+  },
+  "selection": {
+    "threshold": 0.0,
+    "sweep": {}
+  }
+}
