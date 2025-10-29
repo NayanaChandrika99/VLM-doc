@@ -4,3 +4,7 @@ layout_feature_checkpoint: layout/artifacts/layout_head.pt
 adapter_training_cli: triage/adapters/train_lora_adapter.py
 registry: triage/adapters/adapter_registry.json
 artifacts_dir: triage/adapters/artifacts
+serving_endpoints:
+  list: /adapters
+  load: /adapters/load
+  set_default: /adapters/default

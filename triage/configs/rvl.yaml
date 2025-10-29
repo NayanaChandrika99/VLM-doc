@@ -22,8 +22,13 @@ calibration:
   metrics: metrics/calibration.json
   apply_cli: triage/calibration/fit_temperature.py
   evaluate_cli: triage/calibration/evaluate_calibration.py
+  plot_dir: reports
+  plot_prefix: calibration_reliability
 
 abstention:
   thresholds: [0.9, 0.95, 0.97, 0.99]
   metrics: metrics/abstention.json
   apply_cli: triage/triage/apply_abstention.py
+  tune_cli: scripts/tune_abstention.py
+  sweep_output: metrics/abstention_sweep.json
+  sweep_plot: reports/abstention_curve.png

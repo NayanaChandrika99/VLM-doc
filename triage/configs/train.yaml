@@ -41,7 +41,13 @@ calibration:
   temperature_path: triage/artifacts/calibration_temp.json
   metrics_path: metrics/calibration.json
   thresholds: [0.9, 0.95, 0.97, 0.99]
+  plot_dir: reports
+  plot_prefix: calibration_reliability
 
 abstention:
   apply_cli: triage/triage/apply_abstention.py
   output: metrics/abstention.json
+  tune_cli: scripts/tune_abstention.py
+  sweep_output: metrics/abstention_sweep.json
+  sweep_plot: reports/abstention_curve.png
+  min_coverage: 0.6

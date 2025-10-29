@@ -12,7 +12,7 @@ from typing import Dict, Optional, Sequence
 
 import torch
 
-REGISTRY_PATH = Path("triage/adapters/adapter_registry.json")
+from triage.adapters.registry import get_default, register_adapter, set_default
 
 
 @dataclass
@@ -56,20 +56,18 @@ def train_adapter(config: AdapterConfig) -> Dict[str, object]:
     }
     metadata_path.write_text(json.dumps(metadata, indent=2))
 
-    _update_registry(config.adapter_id, adapter_path)
+    register_adapter(
+        config.adapter_id,
+        adapter_path,
+        metadata={
+            "base_model": config.base_model,
+            "notes": config.notes or "",
+        },
+    )
+    if get_default() is None:
+        set_default(config.adapter_id)
 
     return metadata
-
-
-def _update_registry(adapter_id: str, adapter_path: Path) -> None:
-    registry_path = REGISTRY_PATH
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    if registry_path.exists():
-        registry = json.loads(registry_path.read_text())
-    else:
-        registry = {}
-    registry[adapter_id] = {"path": str(adapter_path)}
-    registry_path.write_text(json.dumps(registry, indent=2))
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> AdapterConfig:

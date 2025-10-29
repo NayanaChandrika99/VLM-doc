@@ -13,8 +13,8 @@ DEFAULT_COMMANDS: List[List[str]] = [
     ["pytest", "tests/test_data_adapters.py"],
     ["pytest", "tests/test_layout_features.py", "tests/test_layout_dataset.py", "tests/test_layout_head.py"],
     ["pytest", "tests/test_rvl_dataset.py", "tests/test_rvl_model.py", "tests/test_rvl_training.py", "tests/test_rvl_evaluation.py"],
-    ["pytest", "tests/test_calibration.py", "tests/test_abstention.py"],
-    ["pytest", "tests/test_serving_app.py", "tests/test_lora_scaffolding.py"],
+    ["pytest", "tests/test_calibration.py", "tests/test_calibration_plotting.py", "tests/test_abstention.py", "tests/test_abstention_tuning.py"],
+    ["pytest", "tests/test_serving_app.py", "tests/test_adapter_management.py", "tests/test_lora_scaffolding.py"],
 ]
 
 
