@@ -1,0 +1,51 @@
+dataset:
+  id: pierreguillou/DocLayNet-base
+  cache_dir: ${HF_HOME:-~/.cache/huggingface}
+  splits: [train, validation, test]
+  labels:
+    - caption
+    - footnote
+    - formula
+    - list_item
+    - page_footer
+    - page_header
+    - picture
+    - section_header
+    - table
+    - text
+    - title
+
+layout_features:
+  descriptor_names: !!seq
+    - area_ratio__caption
+    - area_ratio__footnote
+    - area_ratio__formula
+    - area_ratio__list_item
+    - area_ratio__page_footer
+    - area_ratio__page_header
+    - area_ratio__picture
+    - area_ratio__section_header
+    - area_ratio__table
+    - area_ratio__text
+    - area_ratio__title
+    - count_ratio__caption
+    - count_ratio__footnote
+    - count_ratio__formula
+    - count_ratio__list_item
+    - count_ratio__page_footer
+    - count_ratio__page_header
+    - count_ratio__picture
+    - count_ratio__section_header
+    - count_ratio__table
+    - count_ratio__text
+    - count_ratio__title
+    - coverage_ratio
+    - whitespace_ratio
+    - region_count_normalized
+    - page_aspect_ratio
+    - layout_entropy
+    - textual_area_ratio
+    - visual_area_ratio
+  artifacts_dir: layout/artifacts
+  head_checkpoint: layout/artifacts/layout_head.pt
+  metrics: layout/artifacts/layout_head_metrics.json

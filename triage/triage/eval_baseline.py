@@ -26,6 +26,12 @@ def main(args: Sequence[str] | None = None) -> None:
     parser.add_argument("--calibration-id", default="baseline-temp-v0", help="Calibration identifier metadata.")
     parser.add_argument("--adapter-id", default="global", help="Adapter identifier metadata.")
     parser.add_argument(
+        "--backend",
+        default=BaselineInference().config.backend,
+        choices=["auto", "mlx", "transformers"],
+        help="Inference backend to evaluate.",
+    )
+    parser.add_argument(
         "--threshold-grid",
         nargs="*",
         type=float,
@@ -37,6 +43,7 @@ def main(args: Sequence[str] | None = None) -> None:
     predictor = BaselineInference(
         config=InferenceConfig(
             model_id=parsed.model_id,
+            backend=parsed.backend,
             calibration_id=parsed.calibration_id,
             adapter_id=parsed.adapter_id,
         )

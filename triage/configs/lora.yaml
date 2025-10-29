@@ -1,0 +1,3 @@
+base_model: richardyoung/olmOCR-2-7B-1025-MLX-4bit
+enable_layout_fusion: true
+layout_feature_checkpoint: layout/artifacts/layout_head.pt

@@ -1,0 +1,11 @@
+dataset:
+  id: vaclavpechtor/rvl_cdip-small-200
+  splits:
+    train: train
+    validation: validation
+    test: test
+
+model:
+  backbone: richardyoung/olmOCR-2-7B-1025-MLX-4bit
+  use_layout_features: true
+  layout_feature_source: layout/artifacts/layout_head.pt

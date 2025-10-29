@@ -11,20 +11,29 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from PIL import Image
 
-from huggingface_hub import hf_hub_download
+try:  # Optional MLX backend (Apple Silicon)
+    from mlx_vlm import generate as mlx_generate
+    from mlx_vlm import load as mlx_load
+except ImportError:  # pragma: no cover - optional dependency
+    mlx_generate = None
+    mlx_load = None
 
-try:
+try:  # Transformers backend dependencies
     import torch
     from transformers import AutoModelForCausalLM, AutoProcessor
-except ImportError as exc:  # pragma: no cover - surfaced during runtime configuration
-    raise ImportError(
-        "triage_infer requires the `transformers`, `torch`, and `huggingface_hub` packages. "
-        "Install them via `pip install transformers torch huggingface_hub`."
-    ) from exc
+    try:
+        from transformers import Qwen2_5_VLForConditionalGeneration
+    except ImportError:  # pragma: no cover - optional based on transformers version
+        Qwen2_5_VLForConditionalGeneration = None  # type: ignore[assignment]
+except ImportError:  # pragma: no cover - handled per backend
+    torch = None  # type: ignore[assignment]
+    AutoModelForCausalLM = None  # type: ignore[assignment]
+    AutoProcessor = None  # type: ignore[assignment]
+    Qwen2_5_VLForConditionalGeneration = None  # type: ignore[assignment]
 
 from triage.io.structured import PredictionMeta, build_prediction
 from triage.prompts import build_baseline_prompt
@@ -32,6 +41,7 @@ from triage.prompts import build_baseline_prompt
 LOGGER = logging.getLogger(__name__)
 
 DEFAULT_MODEL_ID = os.environ.get("TRIAGE_MODEL_ID", "richardyoung/olmOCR-2-7B-1025-MLX-4bit")
+DEFAULT_BACKEND = os.environ.get("TRIAGE_BACKEND", "auto")
 DEFAULT_CALIBRATION_ID = "baseline-temp-v0"
 DEFAULT_ADAPTER_ID = "global"
 MAX_NEW_TOKENS = 512
@@ -42,6 +52,7 @@ class InferenceConfig:
     """Runtime configuration for the baseline predictor."""
 
     model_id: str = DEFAULT_MODEL_ID
+    backend: str = DEFAULT_BACKEND
     calibration_id: str = DEFAULT_CALIBRATION_ID
     adapter_id: str = DEFAULT_ADAPTER_ID
     max_new_tokens: int = MAX_NEW_TOKENS
@@ -56,7 +67,9 @@ class BaselineInference:
         self._processor = None
         self._tokenizer = None
         self._supports_chat_template = False
-        self._device = torch.device("cpu")
+        self._backend_choice = (self.config.backend or "auto").lower()
+        self._active_backend: Optional[str] = None
+        self._device = torch.device("cpu") if torch is not None else "cpu"
 
     def predict(
         self,
@@ -66,37 +79,47 @@ class BaselineInference:
     ) -> Dict[str, Any]:
         """Predict a label/confidence pair for a single page."""
 
-        processor, model = self._load_components()
+        processor, model, backend = self._load_components()
         pil_image = self._to_image(image)
         prompt = build_baseline_prompt(extra_guidance=extra_guidance)
 
-        inputs = self._prepare_inputs(processor, pil_image, prompt)
-        inputs = _move_to_device(inputs, device=self._device)
-        inputs = _ensure_float32(inputs)
-        inputs = _force_fp32_pixel_values(inputs)
-        pv = inputs.get("pixel_values")
-        if isinstance(pv, torch.Tensor) and pv.dtype != torch.float32:
-            inputs["pixel_values"] = pv.to(dtype=torch.float32)
-
-        with torch.no_grad():
-            generated = model.generate(
-                **inputs,
-                max_new_tokens=self.config.max_new_tokens,
-                do_sample=True,
-                temperature=0.6,
-                top_p=0.9,
-                repetition_penalty=1.15,
+        if backend == "mlx":
+            raw_text = _generate_with_mlx(
+                model=model,
+                processor=processor,
+                image=pil_image,
+                prompt=prompt,
+                max_tokens=self.config.max_new_tokens,
             )
-        trimmed = [
-            output_ids[len(input_ids) :]
-            for input_ids, output_ids in zip(inputs["input_ids"], generated, strict=False)
-        ]
-        decoded = processor.batch_decode(
-            trimmed,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )
-        raw_text = decoded[0] if decoded else ""
+        else:
+            inputs = self._prepare_inputs(processor, pil_image, prompt)
+            inputs = _move_to_device(inputs, device=self._device)
+            inputs = _ensure_float32(inputs)
+            inputs = _force_fp32_pixel_values(inputs)
+            pv = inputs.get("pixel_values")
+            if torch is not None and isinstance(pv, torch.Tensor) and pv.dtype != torch.float32:
+                inputs["pixel_values"] = pv.to(dtype=torch.float32)
+
+            assert torch is not None  # safety: transformers backend implies torch import succeeded
+            with torch.no_grad():
+                generated = model.generate(
+                    **inputs,
+                    max_new_tokens=self.config.max_new_tokens,
+                    do_sample=True,
+                    temperature=0.6,
+                    top_p=0.9,
+                    repetition_penalty=1.15,
+                )
+            trimmed = [
+                output_ids[len(input_ids) :]
+                for input_ids, output_ids in zip(inputs["input_ids"], generated, strict=False)
+            ]
+            decoded = processor.batch_decode(
+                trimmed,
+                skip_special_tokens=True,
+                clean_up_tokenization_spaces=False,
+            )
+            raw_text = decoded[0] if decoded else ""
 
         label, confidence = self._parse_response(raw_text)
         meta = PredictionMeta(
@@ -110,11 +133,39 @@ class BaselineInference:
     # Internal helpers
     # --------------------------------------------------------------------- #
 
-    def _load_components(self):
+    def _load_components(self) -> Tuple[Any, Any, str]:
+        backend = self._resolve_backend()
+        if backend == "mlx":
+            if self._model is None or self._processor is None:
+                LOGGER.info("Loading MLX baseline model '%s'", self.config.model_id)
+                if mlx_load is None:
+                    raise ImportError(
+                        "mlx-vlm is required for backend='mlx'. Install via `pip install mlx-vlm`."
+                    )
+                model, processor = mlx_load(self.config.model_id)
+                self._model = model
+                self._processor = processor
+                self._supports_chat_template = False
+            return self._processor, self._model, backend
+
+        # transformers backend
         if self._model is None or self._processor is None:
-            LOGGER.info("Loading baseline model '%s' on %s", self.config.model_id, self._device)
+            if AutoProcessor is None or AutoModelForCausalLM is None or torch is None:
+                raise ImportError(
+                    "The transformers backend requires `torch` and `transformers`. "
+                    "Install them via `pip install torch transformers` or set backend='mlx'."
+                )
+            model_id = self.config.model_id
+            if model_id.endswith("-MLX-4bit"):
+                LOGGER.warning(
+                    "Model '%s' is MLX-specific. Falling back to base 'allenai/olmOCR-2-7B-1025' "
+                    "for the transformers backend.",
+                    model_id,
+                )
+                model_id = "allenai/olmOCR-2-7B-1025"
+            LOGGER.info("Loading baseline model '%s' on %s", model_id, self._device)
             processor = AutoProcessor.from_pretrained(
-                self.config.model_id,
+                model_id,
                 trust_remote_code=True,
                 use_fast=True,
             )
@@ -123,27 +174,74 @@ class BaselineInference:
             self._tokenizer = getattr(processor, "tokenizer", None)
             self._supports_chat_template = hasattr(processor, "apply_chat_template")
 
+            model_cls = AutoModelForCausalLM
+            if Qwen2_5_VLForConditionalGeneration is not None:
+                model_cls = Qwen2_5_VLForConditionalGeneration
+
+            load_kwargs = dict(
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+            )
             if torch.cuda.is_available():
-                model = AutoModelForCausalLM.from_pretrained(
-                    self.config.model_id,
-                    trust_remote_code=True,
+                load_kwargs.update(
                     device_map="auto",
                     torch_dtype=torch.float16,
-                    low_cpu_mem_usage=True,
-                ).eval()
+                )
             else:
-                model = AutoModelForCausalLM.from_pretrained(
-                    self.config.model_id,
-                    trust_remote_code=True,
-                    attn_implementation="eager",
-                    low_cpu_mem_usage=True,
-                ).to(self._device)
+                load_kwargs.update(attn_implementation="eager")
+
+            try:
+                model = model_cls.from_pretrained(
+                    model_id,
+                    **load_kwargs,
+                ).eval()
+            except (ValueError, OSError) as err:
+                if model_cls is AutoModelForCausalLM and Qwen2_5_VLForConditionalGeneration is not None:
+                    LOGGER.info("Retrying load with Qwen2_5_VLForConditionalGeneration due to: %s", err)
+                    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+                        model_id,
+                        **load_kwargs,
+                    )
+                    if not torch.cuda.is_available():
+                        model = model.to(self._device)
+                    model = model.eval()
+                else:
+                    raise
+            if not torch.cuda.is_available():
+                model = model.to(self._device)
                 model.float()
                 _wrap_vision_tower_fp32(model)
 
             _configure_generation_padding(model, self._tokenizer)
             self._model = model.eval()
-        return self._processor, self._model
+        return self._processor, self._model, backend
+
+    def _resolve_backend(self) -> str:
+        if self._active_backend:
+            return self._active_backend
+
+        choice = self._backend_choice
+        if choice not in {"auto", "mlx", "transformers"}:
+            raise ValueError(f"Unsupported backend '{choice}'. Expected auto|mlx|transformers.")
+
+        if choice == "auto":
+            backend = "mlx" if mlx_load is not None else "transformers"
+        else:
+            backend = choice
+
+        if backend == "mlx" and mlx_load is None:
+            raise ImportError(
+                "Requested backend='mlx' but mlx-vlm is not installed. "
+                "Install via `pip install mlx-vlm` or choose backend='transformers'."
+            )
+        if backend == "transformers" and (AutoProcessor is None or AutoModelForCausalLM is None or torch is None):
+            raise ImportError(
+                "Requested backend='transformers' but torch/transformers are unavailable. "
+                "Install them or choose backend='mlx'."
+            )
+
+        self._active_backend = backend
+        return backend
 
     def _prepare_inputs(self, processor, pil_image: Image.Image, prompt: str):
         """Prepare model inputs, honouring chat templates when available."""
@@ -210,7 +308,9 @@ def _extract_json(text: str) -> Dict[str, Any]:
     return json.loads(snippet)
 
 
-def _move_to_device(value, device: torch.device):
+def _move_to_device(value, device: Any):
+    if torch is None:
+        return value
     if hasattr(value, "to") and not isinstance(value, torch.Tensor):
         try:
             return value.to(device=device)
@@ -226,6 +326,8 @@ def _move_to_device(value, device: torch.device):
 
 
 def _ensure_float32(value):
+    if torch is None:
+        return value
     import numpy as np
 
     if isinstance(value, torch.Tensor):
@@ -244,6 +346,9 @@ def _force_processor_fp32(processor) -> None:
     Ensure the underlying image processor emits float32 tensors.
     Recent Qwen2-VL fast processors default to bf16; override that knob.
     """
+
+    if torch is None:
+        return
     ip = getattr(processor, "image_processor", None)
     if ip is None:
         return
@@ -263,7 +368,7 @@ def _force_processor_fp32(processor) -> None:
 def _force_fp32_pixel_values(inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively cast whatever sits under 'pixel_values' to contiguous float32."""
 
-    if "pixel_values" not in inputs:
+    if torch is None or "pixel_values" not in inputs:
         return inputs
 
     def cast(value):
@@ -282,6 +387,8 @@ def _force_fp32_pixel_values(inputs: Dict[str, Any]) -> Dict[str, Any]:
 def _wrap_vision_tower_fp32(model) -> None:
     """Best-effort coercion of the vision tower to operate in float32 on CPU."""
 
+    if torch is None:
+        return
     import types
 
     vt = getattr(model, "vision_tower", None)
@@ -359,24 +466,32 @@ def _configure_generation_padding(model, tokenizer) -> None:
             cfg.eos_token_id = eos_token_id
 
 
-def _load_chat_template(model_id: str) -> Optional[str]:
-    try:
-        path = hf_hub_download(model_id, "chat_template.json")
-    except Exception:
-        return None
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
-    return data.get("template")
+def _generate_with_mlx(model, processor, image: Image.Image, prompt: str, max_tokens: int) -> str:
+    if mlx_generate is None:
+        raise ImportError(
+            "mlx-vlm is required for MLX inference. Install via `pip install mlx-vlm`."
+        )
+    result = mlx_generate(model=model, processor=processor, image=image, prompt=prompt, max_tokens=max_tokens)
+    if isinstance(result, dict):
+        return result.get("text", "")
+    return str(result)
 
 
 # ------------------------------------------------------------------------- #
 # CLI entrypoint
 # ------------------------------------------------------------------------- #
 
+
 def _build_cli() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Baseline VLM inference CLI")
     parser.add_argument("--image", required=True, help="Path to an image file.")
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID, help="HF model identifier.")
+    parser.add_argument(
+        "--backend",
+        default=DEFAULT_BACKEND,
+        choices=["auto", "mlx", "transformers"],
+        help="Inference backend selection.",
+    )
     parser.add_argument("--calibration-id", default=DEFAULT_CALIBRATION_ID, help="Calibration metadata id.")
     parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID, help="Adapter identifier stored in metadata.")
     parser.add_argument("--max-new-tokens", type=int, default=MAX_NEW_TOKENS, help="Generation token budget.")
@@ -388,6 +503,7 @@ def main(args: Optional[list[str]] = None) -> None:
     parsed = parser.parse_args(args=args)
     config = InferenceConfig(
         model_id=parsed.model_id,
+        backend=parsed.backend,
         calibration_id=parsed.calibration_id,
         adapter_id=parsed.adapter_id,
         max_new_tokens=parsed.max_new_tokens,

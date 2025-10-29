@@ -23,6 +23,7 @@ coverage/
 htmlcov/
 .hf_cache
 datasets/
+layout/artifacts/
 
 # Editors
 .vscode/

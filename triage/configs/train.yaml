@@ -1,0 +1,21 @@
+layout_head:
+  embedding_dim: 1024
+  hidden_dim: 512
+  num_hidden_layers: 2
+  dropout: 0.1
+  loss: smooth_l1
+  beta: 0.1
+  learning_rate: 0.001
+  batch_size: 32
+  epochs: 5
+  val_fraction: 0.1
+  random_seed: 13
+  dataset:
+    split: train
+    cache_dir: ${HF_HOME:-~/.cache/huggingface}
+    embedding_store: null
+    allow_random: true
+    dataset_limit: 2048
+  outputs:
+    artifacts_dir: layout/artifacts
+    metrics_path: layout/artifacts/layout_head_metrics.json
