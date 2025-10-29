@@ -1,3 +1,6 @@
 base_model: richardyoung/olmOCR-2-7B-1025-MLX-4bit
 enable_layout_fusion: true
 layout_feature_checkpoint: layout/artifacts/layout_head.pt
+adapter_training_cli: triage/adapters/train_lora_adapter.py
+registry: triage/adapters/adapter_registry.json
+artifacts_dir: triage/adapters/artifacts

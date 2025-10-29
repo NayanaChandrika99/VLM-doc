@@ -24,6 +24,10 @@ htmlcov/
 .hf_cache
 datasets/
 layout/artifacts/
+triage/artifacts/
+triage/adapters/artifacts/
+reports/
+metrics/*.json
 
 # Editors
 .vscode/

@@ -1,0 +1,51 @@
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    Phase 2 – Baseline Prompted Inference                 │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  [Client / Batch Runner]                                                 │
+│           │                                                              │
+│           ▼                                                              │
+│  ┌──────────────────────┐        ┌────────────────────────────┐          │
+│  │  vLLM-style Adapter  │◄──────►│  Baseline Inference Core   │          │
+│  │  (CPU shim, FastAPI) │        │  (`triage_infer.py`)        │          │
+│  └──────────────────────┘        │  - load dots.ocr encoder    │          │
+│           │                      │  - prompt assembly          │          │
+│           ▼                      │  - decoding & validation    │          │
+│  ┌──────────────────────┐        │  - abstain policy           │          │
+│  │  Prompt Templates    │────────┘  - logging hooks            │          │
+│  │ (`triage/prompts/`)  │                                            │
+│  └──────────────────────┘                                            │
+│           │                                                          │
+│           ▼                                                          │
+│  ┌──────────────────────┐        ┌────────────────────────────┐     │
+│  │ Schema Validator     │◄──────►│ Outlines / JSON Formatter  │     │
+│  │ (`triage/io`)        │        │ ensures `{label,conf,meta}` │     │
+│  └──────────────────────┘        └────────────────────────────┘     │
+│           │                                                          │
+│           ▼                                                          │
+│      Structured Output                                               │
+│  `{label, confidence, meta}`                                         │
+│                                                                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Data Flow for Evaluation                                                │
+│                                                                          │
+│  ┌──────────────────────┐                                               │
+│  │ RVL Small (val/test) │                                               │
+│  │ DocLayNet Base       │                                               │
+│  └──────────────────────┘                                               │
+│           │                                                              │
+│           ▼                                                              │
+│  ┌──────────────────────┐        ┌────────────────────────────┐          │
+│  │  Evaluation Runner   │───────►│  Metrics Aggregator        │          │
+│  │  (batch CLI)         │        │  - macro/per-class F1       │          │
+│  │  - loads cached data │        │  - JSON validity rate       │          │
+│  │  - calls inference   │        │  - abstain sweep (τ)        │          │
+│  └──────────────────────┘        │  - confusion stats          │          │
+│                                   └────────────▲──────────────┘          │
+│                                                │                         │
+│                                                │ writes                  │
+│                                         ┌──────────────────────┐         │
+│                                         │ metrics/baseline.json│         │
+│                                         └──────────────────────┘         │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘

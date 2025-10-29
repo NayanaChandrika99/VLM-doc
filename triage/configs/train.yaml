@@ -19,3 +19,29 @@ layout_head:
   outputs:
     artifacts_dir: layout/artifacts
     metrics_path: layout/artifacts/layout_head_metrics.json
+
+classifier:
+  embedding_dim: 1024
+  use_layout: true
+  train:
+    cli: triage/triage/train_rvl_classifier.py
+    output_dir: triage/artifacts
+    checkpoint: triage/artifacts/rvl_classifier.pt
+    logits: triage/artifacts/rvl_val_logits.npz
+    metrics: triage/artifacts/rvl_training_metrics.json
+    dry_run: true
+  eval:
+    cli: triage/triage/eval_rvl_classifier.py
+    metrics_path: metrics/rvl_classifier.json
+    save_logits: triage/artifacts/rvl_val_logits.npz
+
+calibration:
+  temperature_cli: triage/calibration/fit_temperature.py
+  evaluation_cli: triage/calibration/evaluate_calibration.py
+  temperature_path: triage/artifacts/calibration_temp.json
+  metrics_path: metrics/calibration.json
+  thresholds: [0.9, 0.95, 0.97, 0.99]
+
+abstention:
+  apply_cli: triage/triage/apply_abstention.py
+  output: metrics/abstention.json

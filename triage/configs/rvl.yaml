@@ -9,3 +9,21 @@ model:
   backbone: richardyoung/olmOCR-2-7B-1025-MLX-4bit
   use_layout_features: true
   layout_feature_source: layout/artifacts/layout_head.pt
+
+classifier:
+  checkpoint: triage/artifacts/rvl_classifier.pt
+  logits: triage/artifacts/rvl_val_logits.npz
+  metrics: metrics/rvl_classifier.json
+  train_cli: triage/triage/train_rvl_classifier.py
+  eval_cli: triage/triage/eval_rvl_classifier.py
+
+calibration:
+  temperature: triage/artifacts/calibration_temp.json
+  metrics: metrics/calibration.json
+  apply_cli: triage/calibration/fit_temperature.py
+  evaluate_cli: triage/calibration/evaluate_calibration.py
+
+abstention:
+  thresholds: [0.9, 0.95, 0.97, 0.99]
+  metrics: metrics/abstention.json
+  apply_cli: triage/triage/apply_abstention.py
